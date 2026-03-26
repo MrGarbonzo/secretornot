@@ -23,6 +23,10 @@ CLASSIFICATION_TIMEOUT_MS = int(os.environ.get("CLASSIFICATION_TIMEOUT_MS", "200
 CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.85"))
 DEFAULT_POLICY = os.environ.get("DEFAULT_POLICY", "private")
 
+# Default models per destination — used when the requested model doesn't exist on the target
+SECRET_AI_DEFAULT_MODEL = os.environ.get("SECRET_AI_DEFAULT_MODEL", "qwen3:8b")
+PUBLIC_LLM_DEFAULT_MODEL = os.environ.get("PUBLIC_LLM_DEFAULT_MODEL", "llama-3.3-70b-versatile")
+
 # Proxy timeout for LLM inference calls (seconds)
 PROXY_TIMEOUT_S = int(os.environ.get("PROXY_TIMEOUT_S", "120"))
 

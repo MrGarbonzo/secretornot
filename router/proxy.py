@@ -14,12 +14,18 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import (
     PUBLIC_LLM_API_KEY,
+    PUBLIC_LLM_DEFAULT_MODEL,
     PUBLIC_LLM_ENDPOINT,
     PROXY_TIMEOUT_S,
     SECRET_AI_API_KEY,
+    SECRET_AI_DEFAULT_MODEL,
     SECRET_AI_ENDPOINT,
 )
 from models import Destination
+
+# Models known to exist on each destination
+_SECRET_AI_MODELS = {"qwen3:8b", "llama3.3:70b", "deepseek-r1:70b", "gemma3:4b", "llama3.2-vision:latest"}
+_PUBLIC_LLM_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768"}
 
 
 def _endpoint_for(destination: Destination) -> tuple[str, str]:
@@ -27,6 +33,13 @@ def _endpoint_for(destination: Destination) -> tuple[str, str]:
     if destination == Destination.SECRET_AI:
         return SECRET_AI_ENDPOINT.rstrip("/"), SECRET_AI_API_KEY
     return PUBLIC_LLM_ENDPOINT.rstrip("/"), PUBLIC_LLM_API_KEY
+
+
+def _resolve_model(model: str, destination: Destination) -> str:
+    """Pick a model that the destination actually supports."""
+    if destination == Destination.SECRET_AI:
+        return model if model in _SECRET_AI_MODELS else SECRET_AI_DEFAULT_MODEL
+    return model if model in _PUBLIC_LLM_MODELS else PUBLIC_LLM_DEFAULT_MODEL
 
 
 async def forward(
@@ -37,6 +50,9 @@ async def forward(
     """Proxy the request to *destination* and return the response."""
     base_url, api_key = _endpoint_for(destination)
     url = f"{base_url}/v1/chat/completions"
+
+    # Swap model if needed so the destination can handle it
+    body = {**body, "model": _resolve_model(body.get("model", ""), destination)}
 
     headers = {
         "Content-Type": "application/json",
