@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+audit.jsonl
+training/training_data.jsonl
+training/model_checkpoint/
+training/_generate_local.py
+*.egg-info/
+dist/
+build/
+.mypy_cache/
