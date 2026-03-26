@@ -48,19 +48,28 @@ async def forward(
     return await _forward_sync(url, headers, body)
 
 
+_TIMEOUT = httpx.Timeout(timeout=PROXY_TIMEOUT_S, connect=10.0)
+
+
 async def _forward_sync(url: str, headers: dict, body: dict) -> JSONResponse:
     """Non-streaming: POST, wait for full response, return as JSON."""
-    async with httpx.AsyncClient(verify=False, timeout=PROXY_TIMEOUT_S) as client:
+    async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
         resp = await client.post(url, json=body, headers=headers)
         # Pass through status and body exactly as-is
-        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+        try:
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+        except Exception:
+            return JSONResponse(
+                content={"error": {"message": resp.text or "Empty response from upstream", "type": "upstream_error"}},
+                status_code=resp.status_code or 502,
+            )
 
 
 async def _forward_stream(url: str, headers: dict, body: dict) -> StreamingResponse:
     """Streaming: POST with stream=True, SSE passthrough to client."""
 
     async def event_generator() -> AsyncIterator[bytes]:
-        async with httpx.AsyncClient(verify=False, timeout=PROXY_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
             async with client.stream("POST", url, json=body, headers=headers) as resp:
                 async for chunk in resp.aiter_bytes():
                     yield chunk

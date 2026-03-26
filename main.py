@@ -144,11 +144,12 @@ async def test_ui():
 <header>
   <h1>SecretOrNot <span>— privacy router</span></h1>
   <select id="model" class="model-select">
-    <option value="llama-3.3-70b-versatile">Groq: llama-3.3-70b</option>
-    <option value="llama3.1:8b">Secret AI: llama3.1:8b</option>
+    <option value="qwen3:8b">Secret AI: qwen3:8b</option>
+    <option value="llama3.3:70b">Secret AI: llama3.3:70b</option>
     <option value="deepseek-r1:70b">Secret AI: deepseek-r1:70b</option>
-    <option value="gpt-4o">OpenAI: gpt-4o</option>
+    <option value="gemma3:4b">Secret AI: gemma3:4b</option>
     <option value="gpt-4o-mini">OpenAI: gpt-4o-mini</option>
+    <option value="gpt-4o">OpenAI: gpt-4o</option>
   </select>
 </header>
 <div id="chat"></div>
