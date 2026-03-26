@@ -113,10 +113,9 @@ async def test_ui():
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 20px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; }
+  header { padding: 20px 24px; border-bottom: 1px solid #222; }
   header h1 { font-size: 20px; font-weight: 600; }
   header h1 span { color: #666; font-weight: 400; }
-  .model-select { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 6px 12px; color: #e0e0e0; font-size: 13px; }
   #chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
   .turn { max-width: 720px; width: 100%; margin: 0 auto; }
   .user-msg { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 14px 18px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
@@ -143,13 +142,6 @@ async def test_ui():
 <body>
 <header>
   <h1>SecretOrNot <span>— privacy router</span></h1>
-  <select id="model" class="model-select">
-    <option value="llama-3.3-70b-versatile">Groq: llama-3.3-70b</option>
-    <option value="qwen3:8b">Secret AI: qwen3:8b</option>
-    <option value="llama3.3:70b">Secret AI: llama3.3:70b</option>
-    <option value="deepseek-r1:70b">Secret AI: deepseek-r1:70b</option>
-    <option value="gemma3:4b">Secret AI: gemma3:4b</option>
-  </select>
 </header>
 <div id="chat"></div>
 <div id="input-area">
@@ -162,7 +154,6 @@ async def test_ui():
 const chat = document.getElementById('chat');
 const input = document.getElementById('prompt');
 const btn = document.getElementById('send');
-const modelSelect = document.getElementById('model');
 let history = [];
 
 input.addEventListener('keydown', e => {
@@ -228,7 +219,7 @@ async function send() {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        model: modelSelect.value,
+        model: "auto",
         messages: history,
         stream: false
       })
