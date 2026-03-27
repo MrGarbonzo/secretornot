@@ -14,7 +14,6 @@ COPY training/model.onnx.data training/model.onnx.data
 COPY training/model_checkpoint/tokenizer.json training/model_checkpoint/tokenizer.json
 COPY training/model_checkpoint/tokenizer_config.json training/model_checkpoint/tokenizer_config.json
 
-ENV CLASSIFIER_BACKEND=distilbert
 ENV DISTILBERT_MODEL_PATH=training/model.onnx
 
 EXPOSE 8000

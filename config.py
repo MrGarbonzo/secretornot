@@ -9,13 +9,7 @@ SECRET_AI_API_KEY = os.environ["SECRET_AI_API_KEY"]
 PUBLIC_LLM_ENDPOINT = os.environ["PUBLIC_LLM_ENDPOINT"]
 PUBLIC_LLM_API_KEY = os.environ["PUBLIC_LLM_API_KEY"]
 
-# Classifier (Layer 2) — Gemma POC via Secret AI
-CLASSIFIER_ENDPOINT = os.environ.get("CLASSIFIER_ENDPOINT", SECRET_AI_ENDPOINT)
-CLASSIFIER_API_KEY = os.environ.get("CLASSIFIER_API_KEY", SECRET_AI_API_KEY)
-CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "gemma3:4b")
-
-# Classifier backend: "gemma" (POC) or "distilbert" (production)
-CLASSIFIER_BACKEND = os.environ.get("CLASSIFIER_BACKEND", "gemma")
+# Classifier (Layer 2) — fine-tuned DistilBERT via ONNX
 DISTILBERT_MODEL_PATH = os.environ.get("DISTILBERT_MODEL_PATH", "training/model.onnx")
 
 # Timeouts and thresholds

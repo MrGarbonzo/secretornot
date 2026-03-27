@@ -5,7 +5,6 @@ os.environ.setdefault("SECRET_AI_ENDPOINT", "https://unused")
 os.environ.setdefault("SECRET_AI_API_KEY", "unused")
 os.environ.setdefault("PUBLIC_LLM_ENDPOINT", "https://unused")
 os.environ.setdefault("PUBLIC_LLM_API_KEY", "unused")
-os.environ.setdefault("CLASSIFIER_BACKEND", "distilbert")
 os.environ.setdefault("DISTILBERT_MODEL_PATH", "training/model.onnx")
 
 import asyncio

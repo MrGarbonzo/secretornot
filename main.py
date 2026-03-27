@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from models import ChatCompletionRequest
-from router.decision import decide, resolve_destination
+from router.decision import decide, decide_conversation, resolve_destination
 from router.proxy import forward
 from audit.logger import log_decision
 
@@ -41,14 +41,9 @@ async def chat_completions(request: Request):
 
     request_id = str(uuid.uuid4())
 
-    # Build classification text from all messages
-    classify_text = "\n".join(
-        f"{m.role}: {m.content}" for m in parsed.messages if m.content
-    )
-
     # ── Classify ─────────────────────────────────────────────────────────
     classify_start = time.perf_counter()
-    result = await decide(classify_text)
+    result = await decide_conversation(parsed.messages)
     classification_ms = (time.perf_counter() - classify_start) * 1000
 
     destination = resolve_destination(result)
