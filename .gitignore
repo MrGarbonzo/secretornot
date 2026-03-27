@@ -10,3 +10,5 @@ training/_generate_local.py
 dist/
 build/
 .mypy_cache/
+secretvm_key
+feedback.jsonl

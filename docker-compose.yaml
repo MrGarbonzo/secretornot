@@ -14,3 +14,5 @@ services:
       - CLASSIFICATION_TIMEOUT_MS=${CLASSIFICATION_TIMEOUT_MS:-2000}
       - PROXY_TIMEOUT_S=${PROXY_TIMEOUT_S:-120}
       - AUDIT_LOG_FILE=${AUDIT_LOG_FILE:-audit.jsonl}
+    volumes:
+      - ./feedback.jsonl:/app/feedback.jsonl

@@ -28,19 +28,35 @@ from transformers import (
 )
 
 DATA_FILE = Path(__file__).parent / "training_data.jsonl"
+FEEDBACK_FILE = Path(__file__).parent.parent / "feedback.jsonl"
 CHECKPOINT_DIR = Path(__file__).parent / "model_checkpoint"
 MODEL_NAME = "distilbert-base-uncased"
 MAX_LENGTH = 256
 
 
 def load_data() -> Dataset:
-    """Load training_data.jsonl into a HuggingFace Dataset."""
+    """Load training_data.jsonl + feedback.jsonl into a HuggingFace Dataset."""
     records = []
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
                 records.append(json.loads(line))
+
+    # Merge feedback corrections if available
+    feedback_count = 0
+    if FEEDBACK_FILE.exists():
+        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                if entry.get("text") and "label" in entry:
+                    records.append({"text": entry["text"], "label": int(entry["label"])})
+                    feedback_count += 1
+        if feedback_count:
+            print(f"  Merged {feedback_count} feedback examples from {FEEDBACK_FILE}")
 
     if not records:
         print(f"ERROR: No data found in {DATA_FILE}")

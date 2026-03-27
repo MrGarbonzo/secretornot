@@ -6,16 +6,18 @@ and routes them to the appropriate LLM backend.  Fully OpenAI-compatible.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from models import ChatCompletionRequest
+from models import ChatCompletionRequest, ChatMessage
 from router.decision import decide, decide_conversation, resolve_destination
 from router.proxy import forward
 from audit.logger import log_decision
+from config import AUDIT_LOG_FILE
 
 app = FastAPI(
     title="SecretOrNot",
@@ -73,12 +75,19 @@ async def chat_completions(request: Request):
 async def classify_only(request: Request):
     """Classify a prompt without routing — for the test UI."""
     body = await request.json()
+    messages = body.get("messages")
     text = body.get("text", "")
-    if not text.strip():
+
+    if messages:
+        parsed_messages = [ChatMessage(**m) for m in messages]
+        classify_start = time.perf_counter()
+        result = await decide_conversation(parsed_messages)
+    elif text.strip():
+        classify_start = time.perf_counter()
+        result = await decide(text)
+    else:
         return {"classification": "EMPTY", "source": "none", "confidence": 0}
 
-    classify_start = time.perf_counter()
-    result = await decide(text)
     classification_ms = (time.perf_counter() - classify_start) * 1000
     destination = resolve_destination(result)
 
@@ -90,6 +99,25 @@ async def classify_only(request: Request):
         "routed_to": destination.value,
         "latency_ms": round(classification_ms, 1),
     }
+
+
+FEEDBACK_FILE = AUDIT_LOG_FILE.replace("audit", "feedback") if "audit" in AUDIT_LOG_FILE else "feedback.jsonl"
+
+
+@app.post("/feedback")
+async def feedback(request: Request):
+    """Save correct/incorrect feedback for retraining."""
+    body = await request.json()
+    entry = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+        "text": body.get("text", ""),
+        "model_said": body.get("model_said", ""),
+        "correct_label": body.get("correct_label", ""),
+        "label": 1 if body.get("correct_label") == "PRIVATE" else 0,
+    }
+    with open(FEEDBACK_FILE, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    return {"ok": True}
 
 
 @app.get("/health")
@@ -108,9 +136,18 @@ async def test_ui():
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 20px 24px; border-bottom: 1px solid #222; }
+  header { padding: 16px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; }
+  header .left { display: flex; align-items: center; gap: 16px; }
   header h1 { font-size: 20px; font-weight: 600; }
   header h1 span { color: #666; font-weight: 400; }
+  .tabs { display: flex; gap: 4px; }
+  .tab { background: none; border: 1px solid #333; color: #888; border-radius: 8px; padding: 6px 14px; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .tab:hover { color: #ccc; border-color: #555; background: none; }
+  .tab.active { background: #1a1a2e; color: #e0e0e0; border-color: #2a2a4a; }
+  .header-btn { background: none; border: 1px solid #333; color: #888; border-radius: 8px; padding: 6px 14px; font-size: 13px; }
+  .header-btn:hover { color: #ccc; border-color: #555; background: none; }
+  .panel { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+  .panel.active { display: flex; }
   #chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
   .turn { max-width: 720px; width: 100%; margin: 0 auto; }
   .user-msg { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 14px 18px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
@@ -126,36 +163,89 @@ async def test_ui():
   .thinking { color: #666; font-style: italic; font-size: 13px; padding: 8px 0; }
   #input-area { padding: 16px 24px; border-top: 1px solid #222; background: #0f0f0f; }
   #input-wrap { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; }
-  #prompt { flex: 1; background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 12px 16px; color: #e0e0e0; font-size: 15px; font-family: inherit; resize: none; outline: none; min-height: 44px; max-height: 200px; }
-  #prompt:focus { border-color: #555; }
-  #prompt::placeholder { color: #555; }
+  textarea { flex: 1; background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 12px 16px; color: #e0e0e0; font-size: 15px; font-family: inherit; resize: none; outline: none; min-height: 44px; max-height: 200px; }
+  textarea:focus { border-color: #555; }
+  textarea::placeholder { color: #555; }
   button { background: #fff; color: #000; border: none; border-radius: 10px; padding: 12px 20px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   button:hover { background: #ddd; }
   button:disabled { background: #333; color: #666; cursor: not-allowed; }
+  /* Classifier test panel */
+  #classify-panel { padding: 24px; overflow-y: auto; }
+  #classify-inner { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  #classify-input { min-height: 100px; }
+  #classify-results { display: flex; flex-direction: column; gap: 12px; }
+  .classify-row { background: #111; border: 1px solid #2a2a2a; border-radius: 12px; padding: 14px 18px; }
+  .classify-row .text { font-size: 14px; color: #aaa; margin-bottom: 8px; white-space: pre-wrap; }
+  .classify-row .result { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  .feedback-btns { display: flex; gap: 6px; margin-left: auto; }
+  .fb-btn { padding: 4px 12px; font-size: 12px; border-radius: 6px; font-weight: 600; }
+  .fb-btn.correct { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
+  .fb-btn.correct:hover { background: #0a3d1f; }
+  .fb-btn.wrong { background: #3b1219; color: #f87171; border: 1px solid #7f1d1d; }
+  .fb-btn.wrong:hover { background: #4a1820; }
+  .fb-btn.sent { opacity: 0.5; cursor: default; }
+  .fb-btn.sent:hover { background: inherit; }
 </style>
 </head>
 <body>
 <header>
-  <h1>SecretOrNot <span>— privacy router</span></h1>
+  <div class="left">
+    <h1>SecretOrNot <span>— privacy router</span></h1>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('chat')">Chat</button>
+      <button class="tab" onclick="switchTab('classify')">Classifier</button>
+    </div>
+  </div>
+  <button class="header-btn" onclick="newChat()">New Chat</button>
 </header>
-<div id="chat"></div>
-<div id="input-area">
-  <div id="input-wrap">
-    <textarea id="prompt" rows="1" placeholder="Type a message..." autofocus></textarea>
-    <button id="send" onclick="send()">Send</button>
+
+<!-- Chat panel -->
+<div id="chat-panel" class="panel active">
+  <div id="chat"></div>
+  <div id="input-area">
+    <div id="input-wrap">
+      <textarea id="prompt" rows="1" placeholder="Type a message..." autofocus></textarea>
+      <button id="send" onclick="send()">Send</button>
+    </div>
   </div>
 </div>
+
+<!-- Classifier test panel -->
+<div id="classify-panel" class="panel">
+  <div id="classify-inner">
+    <div style="color:#888; font-size:13px;">Test DistilBERT classifier directly — single input, no conversation context. Mark results correct or incorrect to save training feedback.</div>
+    <textarea id="classify-input" placeholder="Enter text to classify..." rows="3"></textarea>
+    <button onclick="classifyTest()">Classify</button>
+    <div id="classify-results"></div>
+  </div>
+</div>
+
 <script>
 const chat = document.getElementById('chat');
 const input = document.getElementById('prompt');
 const btn = document.getElementById('send');
 let history = [];
 
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  if (tab === 'chat') {
+    document.querySelector('.tab:nth-child(1)').classList.add('active');
+    document.getElementById('chat-panel').classList.add('active');
+  } else {
+    document.querySelector('.tab:nth-child(2)').classList.add('active');
+    document.getElementById('classify-panel').classList.add('active');
+  }
+}
+
+function newChat() {
+  history = [];
+  chat.innerHTML = '';
+}
+
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
-
-// Auto-resize textarea
 input.addEventListener('input', () => {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 200) + 'px';
@@ -170,7 +260,6 @@ async function send() {
 
   history.push({role: 'user', content: text});
 
-  // Create turn container
   const turn = document.createElement('div');
   turn.className = 'turn';
   turn.innerHTML = `<div class="user-msg">${esc(text)}</div>`
@@ -182,12 +271,11 @@ async function send() {
   const routingBar = turn.querySelector('.routing-bar');
   const responseDiv = turn.querySelector('.llm-response');
 
-  // Step 1: Classify
   try {
     const classRes = await fetch('/classify', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text})
+      body: JSON.stringify({text, messages: history})
     });
     const c = classRes.ok ? await classRes.json() : null;
     if (c) {
@@ -205,7 +293,6 @@ async function send() {
 
   chat.scrollTop = chat.scrollHeight;
 
-  // Step 2: Get LLM response via the real router endpoint
   try {
     responseDiv.textContent = '';
     responseDiv.className = 'llm-response';
@@ -213,11 +300,7 @@ async function send() {
     const llmRes = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        model: "auto",
-        messages: history,
-        stream: false
-      })
+      body: JSON.stringify({ model: "auto", messages: history, stream: false })
     });
 
     if (!llmRes.ok) {
@@ -227,8 +310,7 @@ async function send() {
     } else {
       const data = await llmRes.json();
       const content = data.choices && data.choices[0] && data.choices[0].message
-        ? data.choices[0].message.content
-        : JSON.stringify(data);
+        ? data.choices[0].message.content : JSON.stringify(data);
       responseDiv.textContent = content;
       history.push({role: 'assistant', content});
     }
@@ -240,6 +322,58 @@ async function send() {
   btn.disabled = false;
   input.focus();
   chat.scrollTop = chat.scrollHeight;
+}
+
+// ── Classifier test panel ──────────────────────────────────────────
+const classifyInput = document.getElementById('classify-input');
+const classifyResults = document.getElementById('classify-results');
+
+classifyInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); classifyTest(); }
+});
+
+async function classifyTest() {
+  const text = classifyInput.value.trim();
+  if (!text) return;
+  classifyInput.value = '';
+
+  const row = document.createElement('div');
+  row.className = 'classify-row';
+  row.innerHTML = `<div class="text">${esc(text)}</div><div class="result thinking">classifying...</div>`;
+  classifyResults.prepend(row);
+
+  try {
+    const res = await fetch('/classify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text})
+    });
+    const c = await res.json();
+    const resultDiv = row.querySelector('.result');
+    resultDiv.className = 'result';
+    resultDiv.innerHTML = `<span class="badge ${c.classification}">${c.classification}</span>`
+      + `<span>${c.source}${c.rule_matched ? ': ' + c.rule_matched : ''}</span>`
+      + `<span>conf: ${c.confidence}</span>`
+      + `<span>${c.latency_ms}ms</span>`
+      + `<div class="feedback-btns">`
+      + `<button class="fb-btn correct" onclick="sendFeedback(this,'${esc(text).replace(/'/g,"\\'")}','${c.classification}','${c.classification}')">Correct</button>`
+      + `<button class="fb-btn wrong" onclick="sendFeedback(this,'${esc(text).replace(/'/g,"\\'")}','${c.classification}','${c.classification==="PRIVATE"?"PUBLIC":"PRIVATE"}')">Wrong → ${c.classification==='PRIVATE'?'PUBLIC':'PRIVATE'}</button>`
+      + `</div>`;
+  } catch(e) {
+    row.querySelector('.result').textContent = 'error: ' + e.message;
+  }
+}
+
+async function sendFeedback(el, text, modelSaid, correctLabel) {
+  if (el.classList.contains('sent')) return;
+  const btns = el.parentElement;
+  btns.querySelectorAll('.fb-btn').forEach(b => b.classList.add('sent'));
+  el.textContent += ' (saved)';
+  await fetch('/feedback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, model_said: modelSaid, correct_label: correctLabel})
+  });
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
