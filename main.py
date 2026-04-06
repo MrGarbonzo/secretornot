@@ -31,7 +31,7 @@ def _get_docker_host_ip() -> str | None:
             for line in f:
                 fields = line.strip().split()
                 if fields[1] == "00000000":  # default route
-                    return ".".join(str(b) for b in reversed(struct.pack("<I", int(fields[2], 16))))
+                    return ".".join(str(b) for b in struct.pack("<I", int(fields[2], 16)))
         return None
     except Exception:
         return None
