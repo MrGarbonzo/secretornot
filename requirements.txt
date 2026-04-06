@@ -5,3 +5,4 @@ pydantic>=2.6.0
 python-dotenv>=1.0.0
 onnxruntime>=1.17.0
 transformers>=4.40.0
+secretvm-verify>=0.3.0

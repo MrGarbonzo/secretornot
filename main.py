@@ -17,7 +17,50 @@ from models import ChatCompletionRequest, ChatMessage
 from router.decision import decide, decide_conversation, resolve_destination
 from router.proxy import forward
 from audit.logger import log_decision
-from config import AUDIT_LOG_FILE
+from config import AUDIT_LOG_FILE, SECRET_AI_VM_URL, SELF_VM_URL
+
+# ── Attestation cache ───────────────────────────────────────────────
+_attestation_cache: dict | None = None
+
+
+def _is_attestation_available(host: str, port: int = 29343, timeout: float = 3) -> bool:
+    """Check if the attestation service is reachable."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _run_attestation() -> dict:
+    """Run secretvm-verify against both VMs. Called once and cached."""
+    from dataclasses import asdict
+    from secretvm.verify import check_secret_vm
+
+    results = {}
+
+    # Verify the Secret AI machine (where private prompts go)
+    try:
+        ai_result = check_secret_vm(SECRET_AI_VM_URL)
+        results["secret_ai"] = asdict(ai_result)
+    except Exception as e:
+        results["secret_ai"] = {"valid": False, "error": str(e)}
+
+    # Verify the SecretOrNot router VM itself (self-attestation via localhost)
+    # Auto-detect: only attempt if the local attestation service is reachable
+    if SELF_VM_URL:
+        from secretvm.verify import _parse_vm_url
+        host, port = _parse_vm_url(SELF_VM_URL)
+        if _is_attestation_available(host, port):
+            try:
+                self_result = check_secret_vm(SELF_VM_URL)
+                results["router"] = asdict(self_result)
+            except Exception as e:
+                results["router"] = {"valid": False, "error": str(e)}
+
+    return results
+
 
 app = FastAPI(
     title="SecretOrNot",
@@ -125,6 +168,16 @@ async def health():
     return {"ok": True, "service": "SecretOrNot", "version": "0.1.0"}
 
 
+@app.get("/attestation")
+async def attestation():
+    """Return cached TEE attestation results for both VMs."""
+    global _attestation_cache
+    if _attestation_cache is None:
+        import asyncio
+        _attestation_cache = await asyncio.to_thread(_run_attestation)
+    return _attestation_cache
+
+
 @app.get("/", response_class=HTMLResponse)
 async def test_ui():
     return """<!DOCTYPE html>
@@ -185,6 +238,25 @@ async def test_ui():
   .fb-btn.wrong:hover { background: #4a1820; }
   .fb-btn.sent { opacity: 0.5; cursor: default; }
   .fb-btn.sent:hover { background: inherit; }
+  /* Attestation banner */
+  #attestation-banner { max-width: 720px; width: 100%; margin: 0 auto; }
+  .attest-card { background: #111; border: 1px solid #2a2a2a; border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+  .attest-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none; }
+  .attest-header:hover { background: #1a1a1a; }
+  .attest-status { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .attest-status.pass { background: #4ade80; box-shadow: 0 0 6px #4ade8066; }
+  .attest-status.fail { background: #f87171; box-shadow: 0 0 6px #f8717166; }
+  .attest-status.loading { background: #facc15; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .attest-title { font-size: 13px; font-weight: 600; flex: 1; }
+  .attest-summary { font-size: 12px; color: #888; }
+  .attest-chevron { color: #555; font-size: 12px; transition: transform 0.2s; }
+  .attest-card.open .attest-chevron { transform: rotate(90deg); }
+  .attest-details { display: none; padding: 0 16px 12px; font-size: 12px; color: #aaa; line-height: 1.8; }
+  .attest-card.open .attest-details { display: block; }
+  .attest-check { display: flex; gap: 8px; align-items: center; }
+  .attest-check .icon { font-size: 13px; }
+  .attest-section-label { color: #666; font-weight: 600; margin-top: 6px; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
 </style>
 </head>
 <body>
@@ -201,7 +273,9 @@ async def test_ui():
 
 <!-- Chat panel -->
 <div id="chat-panel" class="panel active">
-  <div id="chat"></div>
+  <div id="chat">
+    <div id="attestation-banner"></div>
+  </div>
   <div id="input-area">
     <div id="input-wrap">
       <textarea id="prompt" rows="1" placeholder="Type a message..." autofocus></textarea>
@@ -240,7 +314,10 @@ function switchTab(tab) {
 
 function newChat() {
   history = [];
+  // Preserve the attestation banner, clear everything else
+  const banner = document.getElementById('attestation-banner');
   chat.innerHTML = '';
+  chat.appendChild(banner);
 }
 
 input.addEventListener('keydown', e => {
@@ -377,6 +454,98 @@ async function sendFeedback(el, text, modelSaid, correctLabel) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── Attestation ──────────────────────────────────────────────────
+const attestBanner = document.getElementById('attestation-banner');
+
+function renderAttestCard(id, label, data) {
+  if (!data) return '';
+  const ok = data.valid === true;
+  const status = ok ? 'pass' : 'fail';
+  const checks = data.checks || {};
+  const report = data.report || {};
+  const errors = data.errors || [];
+  const cpuType = report.cpu_type || data.attestation_type || '?';
+
+  let summaryParts = [];
+  if (ok) summaryParts.push('Verified');
+  else summaryParts.push('Failed');
+  if (cpuType && cpuType !== 'SECRET-VM') summaryParts.push(cpuType);
+  if (checks.gpu_attestation_valid) summaryParts.push('+ GPU');
+  const workload = report.workload;
+  if (workload && workload.status === 'authentic_match') {
+    summaryParts.push('v' + (workload.artifacts_ver || '?'));
+  }
+
+  let detailsHtml = '';
+
+  // CPU section
+  detailsHtml += '<div class="attest-section-label">CPU Attestation</div>';
+  detailsHtml += checkLine(checks.cpu_quote_fetched, 'Quote fetched');
+  detailsHtml += checkLine(checks.cpu_attestation_valid, 'Signature & cert chain valid (' + esc(cpuType) + ')');
+  detailsHtml += checkLine(checks.tls_binding, 'TLS certificate binding');
+
+  // GPU section
+  if (checks.gpu_quote_fetched !== undefined) {
+    detailsHtml += '<div class="attest-section-label">GPU Attestation</div>';
+    if (checks.gpu_quote_fetched === false && !checks.gpu_attestation_valid) {
+      detailsHtml += checkLine(null, 'No GPU on this machine');
+    } else {
+      detailsHtml += checkLine(checks.gpu_attestation_valid, 'NVIDIA attestation (JWT verified via NRAS)');
+      detailsHtml += checkLine(checks.gpu_binding, 'GPU nonce binding to CPU quote');
+    }
+  }
+
+  // Workload section
+  if (workload) {
+    detailsHtml += '<div class="attest-section-label">Workload</div>';
+    detailsHtml += checkLine(checks.workload_verified, 'Authentic SecretVM image');
+    if (workload.template_name) detailsHtml += checkLine(null, 'Template: ' + esc(workload.template_name));
+    if (workload.artifacts_ver) detailsHtml += checkLine(null, 'Version: ' + esc(workload.artifacts_ver));
+    if (workload.env) detailsHtml += checkLine(null, 'Env: ' + esc(workload.env));
+  }
+
+  // Errors
+  if (errors.length > 0) {
+    detailsHtml += '<div class="attest-section-label">Errors</div>';
+    errors.forEach(e => { detailsHtml += '<div class="attest-check" style="color:#f87171;">' + esc(e) + '</div>'; });
+  }
+
+  return '<div class="attest-card" id="' + id + '">'
+    + '<div class="attest-header" onclick="this.parentElement.classList.toggle(\'open\')">'
+    + '<div class="attest-status ' + status + '"></div>'
+    + '<div class="attest-title">' + esc(label) + '</div>'
+    + '<div class="attest-summary">' + esc(summaryParts.join(' / ')) + '</div>'
+    + '<div class="attest-chevron">&#9654;</div>'
+    + '</div>'
+    + '<div class="attest-details">' + detailsHtml + '</div>'
+    + '</div>';
+}
+
+function checkLine(val, text) {
+  if (val === true) return '<div class="attest-check"><span class="icon" style="color:#4ade80;">&#10003;</span> ' + text + '</div>';
+  if (val === false) return '<div class="attest-check"><span class="icon" style="color:#f87171;">&#10007;</span> ' + text + '</div>';
+  return '<div class="attest-check"><span class="icon" style="color:#555;">&#8226;</span> ' + text + '</div>';
+}
+
+(async function loadAttestation() {
+  attestBanner.innerHTML =
+    '<div class="attest-card"><div class="attest-header">'
+    + '<div class="attest-status loading"></div>'
+    + '<div class="attest-title">Verifying TEE attestation...</div>'
+    + '<div class="attest-summary">contacting Intel PCS, NVIDIA NRAS...</div>'
+    + '</div></div>';
+  try {
+    const res = await fetch('/attestation');
+    const data = await res.json();
+    let html = '';
+    if (data.secret_ai) html += renderAttestCard('attest-ai', 'Secret AI Machine', data.secret_ai);
+    if (data.router) html += renderAttestCard('attest-router', 'SecretOrNot Router (this machine)', data.router);
+    attestBanner.innerHTML = html || '<div style="color:#666;font-size:12px;padding:8px 0;">No attestation data available.</div>';
+  } catch(e) {
+    attestBanner.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px 0;">Attestation check failed: ' + esc(e.message) + '</div>';
+  }
+})();
 </script>
 </body>
 </html>"""

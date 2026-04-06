@@ -24,5 +24,17 @@ PUBLIC_LLM_DEFAULT_MODEL = os.environ.get("PUBLIC_LLM_DEFAULT_MODEL", "llama-3.3
 # Proxy timeout for LLM inference calls (seconds)
 PROXY_TIMEOUT_S = int(os.environ.get("PROXY_TIMEOUT_S", "120"))
 
+# Attestation — VM URLs for secretvm-verify SDK
+# SECRET_AI_VM_URL defaults to the hostname from SECRET_AI_ENDPOINT
+# SELF_VM_URL defaults to localhost (auto-detected at verification time)
+def _default_secret_ai_vm_url() -> str:
+    from urllib.parse import urlparse
+    parsed = urlparse(SECRET_AI_ENDPOINT)
+    host = parsed.hostname or SECRET_AI_ENDPOINT
+    return f"https://{host}"
+
+SECRET_AI_VM_URL = os.environ.get("SECRET_AI_VM_URL") or _default_secret_ai_vm_url()
+SELF_VM_URL = os.environ.get("SELF_VM_URL", "https://localhost")
+
 # Audit
 AUDIT_LOG_FILE = os.environ.get("AUDIT_LOG_FILE", "audit.jsonl")
