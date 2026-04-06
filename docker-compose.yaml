@@ -1,6 +1,6 @@
 services:
   secretornot:
-    image: ghcr.io/mrgarbonzo/secretornot@sha256:47e94a927b0dcb7d84569c89418319c2ed07761fe7554a5d329a49de5f143786
+    image: ghcr.io/mrgarbonzo/secretornot@sha256:563becc3d4cb94d74536a878b20fca5d1252fe2c729dbad9fea854d58d2e6a10
     restart: unless-stopped
     ports:
       - "8000:8000"
