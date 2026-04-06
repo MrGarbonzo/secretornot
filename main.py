@@ -33,6 +33,20 @@ def _is_attestation_available(host: str, port: int = 29343, timeout: float = 3) 
         return False
 
 
+def _discover_vm_hostname(host: str, port: int = 29343) -> str | None:
+    """Read the TLS cert CN from the attestation service to get the real hostname."""
+    import ssl
+    try:
+        pem = ssl.get_server_certificate((host, port))
+        from cryptography.x509 import load_pem_x509_certificate
+        from cryptography.x509.oid import NameOID
+        cert = load_pem_x509_certificate(pem.encode("ascii"))
+        cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        return cn[0].value if cn else None
+    except Exception:
+        return None
+
+
 def _run_attestation() -> dict:
     """Run secretvm-verify against both VMs. Called once and cached."""
     from dataclasses import asdict
@@ -47,14 +61,17 @@ def _run_attestation() -> dict:
     except Exception as e:
         results["secret_ai"] = {"valid": False, "error": str(e)}
 
-    # Verify the SecretOrNot router VM itself (self-attestation via localhost)
-    # Auto-detect: only attempt if the local attestation service is reachable
+    # Verify the SecretOrNot router VM itself (self-attestation)
+    # Probe the local attestation service, discover the real hostname from
+    # its TLS cert, then verify using that hostname so cert validation passes.
     if SELF_VM_URL:
         from secretvm.verify import _parse_vm_url
         host, port = _parse_vm_url(SELF_VM_URL)
         if _is_attestation_available(host, port):
+            real_hostname = _discover_vm_hostname(host, port)
+            verify_url = f"https://{real_hostname}" if real_hostname else SELF_VM_URL
             try:
-                self_result = check_secret_vm(SELF_VM_URL)
+                self_result = check_secret_vm(verify_url)
                 results["router"] = asdict(self_result)
             except Exception as e:
                 results["router"] = {"valid": False, "error": str(e)}
