@@ -512,7 +512,7 @@ function renderAttestCard(id, label, data) {
   }
 
   return '<div class="attest-card" id="' + id + '">'
-    + '<div class="attest-header" onclick="this.parentElement.classList.toggle(\'open\')">'
+    + '<div class="attest-header" onclick="this.parentElement.classList.toggle(&quot;open&quot;)">'
     + '<div class="attest-status ' + status + '"></div>'
     + '<div class="attest-title">' + esc(label) + '</div>'
     + '<div class="attest-summary">' + esc(summaryParts.join(' / ')) + '</div>'
