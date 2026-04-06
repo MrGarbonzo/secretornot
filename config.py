@@ -34,7 +34,7 @@ def _default_secret_ai_vm_url() -> str:
     return f"https://{host}"
 
 SECRET_AI_VM_URL = os.environ.get("SECRET_AI_VM_URL") or _default_secret_ai_vm_url()
-SELF_VM_URL = os.environ.get("SELF_VM_URL", "https://localhost")
+SELF_VM_URL = os.environ.get("SELF_VM_URL", "https://host.docker.internal")
 
 # Audit
 AUDIT_LOG_FILE = os.environ.get("AUDIT_LOG_FILE", "audit.jsonl")
