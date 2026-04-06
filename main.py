@@ -23,14 +23,36 @@ from config import AUDIT_LOG_FILE, SECRET_AI_VM_URL, SELF_VM_URL
 _attestation_cache: dict | None = None
 
 
-def _is_attestation_available(host: str, port: int = 29343, timeout: float = 3) -> bool:
-    """Check if the attestation service is reachable."""
-    import socket
+def _get_docker_host_ip() -> str | None:
+    """Get the Docker host IP by reading the default gateway from /proc/net/route."""
+    import struct
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+        with open("/proc/net/route") as f:
+            for line in f:
+                fields = line.strip().split()
+                if fields[1] == "00000000":  # default route
+                    return ".".join(str(b) for b in reversed(struct.pack("<I", int(fields[2], 16))))
+        return None
+    except Exception:
+        return None
+
+
+def _find_attestation_host(port: int = 29343) -> str | None:
+    """Find a reachable attestation service, trying multiple host candidates."""
+    import socket
+    candidates = []
+    # If running in Docker, try the host gateway
+    gw = _get_docker_host_ip()
+    if gw:
+        candidates.append(gw)
+    candidates.extend(["host.docker.internal", "localhost", "127.0.0.1"])
+    for host in candidates:
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return host
+        except OSError:
+            continue
+    return None
 
 
 def _discover_vm_hostname(host: str, port: int = 29343) -> str | None:
@@ -62,14 +84,25 @@ def _run_attestation() -> dict:
         results["secret_ai"] = {"valid": False, "error": str(e)}
 
     # Verify the SecretOrNot router VM itself (self-attestation)
-    # Probe the local attestation service, discover the real hostname from
-    # its TLS cert, then verify using that hostname so cert validation passes.
+    # Auto-discover: find the attestation service on the host, read the TLS
+    # cert to get the real VM hostname, then verify using that hostname.
+    # This works without any configuration — no need to know the VM URL.
     if SELF_VM_URL:
-        from secretvm.verify import _parse_vm_url
-        host, port = _parse_vm_url(SELF_VM_URL)
-        if _is_attestation_available(host, port):
-            real_hostname = _discover_vm_hostname(host, port)
-            verify_url = f"https://{real_hostname}" if real_hostname else SELF_VM_URL
+        if SELF_VM_URL == "auto":
+            probe_host = _find_attestation_host()
+        else:
+            from secretvm.verify import _parse_vm_url
+            probe_host, _ = _parse_vm_url(SELF_VM_URL)
+            # check reachability
+            import socket
+            try:
+                socket.create_connection((probe_host, 29343), timeout=3).close()
+            except OSError:
+                probe_host = None
+
+        if probe_host:
+            real_hostname = _discover_vm_hostname(probe_host, 29343)
+            verify_url = f"https://{real_hostname}" if real_hostname else f"https://{probe_host}"
             try:
                 self_result = check_secret_vm(verify_url)
                 results["router"] = asdict(self_result)
