@@ -106,9 +106,52 @@ def _run_attestation() -> dict:
             try:
                 self_result = check_secret_vm(verify_url)
                 results["router"] = asdict(self_result)
+                # Run code provenance on the router's docker-compose
+                results["router"]["provenance"] = _resolve_provenance(verify_url)
             except Exception as e:
                 results["router"] = {"valid": False, "error": str(e)}
 
+    return results
+
+
+def _resolve_provenance(vm_url: str) -> list[dict]:
+    """Fetch the docker-compose from a VM and resolve each image to its source commit."""
+    import html
+    import re
+    import requests
+    from secretvm.verify import _parse_vm_url
+    from code_provenance.compose_parser import parse_compose, parse_image_ref
+    from code_provenance.resolver import resolve_image
+    from dataclasses import asdict
+
+    host, port = _parse_vm_url(vm_url)
+    try:
+        resp = requests.get(f"https://{host}:{port}/docker-compose", timeout=15, verify=True)
+        resp.raise_for_status()
+        # Extract YAML from HTML wrapper
+        text = resp.text.strip()
+        m = re.search(r"<pre>(.*?)</pre>", text, re.DOTALL | re.IGNORECASE)
+        if m:
+            text = m.group(1)
+        text = html.unescape(text)
+        text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)
+    except Exception:
+        return []
+
+    results = []
+    for service, image_str in parse_compose(text):
+        ref = parse_image_ref(image_str)
+        result = resolve_image(service, ref)
+        results.append({
+            "service": result.service,
+            "image": result.image,
+            "repo": result.repo,
+            "commit": result.commit,
+            "commit_url": result.commit_url,
+            "status": result.status,
+            "confidence": result.confidence,
+            "method": result.resolution_method,
+        })
     return results
 
 
@@ -307,6 +350,14 @@ async def test_ui():
   .attest-check { display: flex; gap: 8px; align-items: center; }
   .attest-check .icon { font-size: 13px; }
   .attest-section-label { color: #666; font-weight: 600; margin-top: 6px; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+  .attest-prov { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+  .attest-prov-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+  .attest-prov-svc { color: #888; min-width: 90px; }
+  .attest-prov-link { color: #60a5fa; text-decoration: none; word-break: break-all; }
+  .attest-prov-link:hover { text-decoration: underline; }
+  .attest-prov-conf { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+  .attest-prov-conf.exact { background: #052e16; color: #4ade80; }
+  .attest-prov-conf.approximate { background: #1e1b4b; color: #a5b4fc; }
 </style>
 </head>
 <body>
@@ -553,6 +604,32 @@ function renderAttestCard(id, label, data) {
     if (workload.template_name) detailsHtml += checkLine(null, 'Template: ' + esc(workload.template_name));
     if (workload.artifacts_ver) detailsHtml += checkLine(null, 'Version: ' + esc(workload.artifacts_ver));
     if (workload.env) detailsHtml += checkLine(null, 'Env: ' + esc(workload.env));
+  }
+
+  // Code Provenance
+  const prov = data.provenance || [];
+  if (prov.length > 0) {
+    detailsHtml += '<div class="attest-section-label">Code Provenance</div>';
+    detailsHtml += '<div class="attest-prov">';
+    prov.forEach(p => {
+      let link = '';
+      if (p.commit_url && p.commit) {
+        link = '<a class="attest-prov-link" href="' + esc(p.commit_url) + '" target="_blank">' + esc(p.commit.substring(0, 12)) + '</a>';
+      } else if (p.repo) {
+        link = '<a class="attest-prov-link" href="' + esc(p.repo) + '" target="_blank">' + esc(p.repo.replace('https://github.com/', '')) + '</a>';
+      } else {
+        link = '<span style="color:#666;">unresolved</span>';
+      }
+      let conf = '';
+      if (p.confidence) {
+        conf = ' <span class="attest-prov-conf ' + esc(p.confidence) + '">' + esc(p.confidence) + '</span>';
+      }
+      detailsHtml += '<div class="attest-prov-row">'
+        + '<span class="attest-prov-svc">' + esc(p.service) + '</span>'
+        + link + conf
+        + '</div>';
+    });
+    detailsHtml += '</div>';
   }
 
   // Errors
